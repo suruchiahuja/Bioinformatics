@@ -1,0 +1,210 @@
+---
+title: "Homework #1"
+author: "Suruchi Ahuja, Abbas Rizvi, Hoi Lam Tai, Jingchen Zhang"
+date: "February 15, 2016"
+output: pdf_document
+---
+
+# Problem 1
+The dataset from Lec04.R was loaded. The following code was provided to us by Dr. Gaile.
+```{r, message=FALSE}
+require(knitr)
+require(GEOquery)
+load("gse19439.RData")
+#so I am just going to load it now
+load(file="gse19439.RData")
+gse19439
+```
+
+
+Dr. Gaile creates a factor object `FTB` for the groups (control, latent TB, and positive TB) that corresponds to the samples (in the same order).
+```{r}
+# make a factor object for Control, latent TB and Positive TB
+tmp <- as.character(pData(phenoData(gse19439))[,1])
+J <- length(tmp) # J=number of samples
+TBgroup <- rep("",J)
+for(j in 1:J) TBgroup[j]=substring(tmp[j],1,3)
+# make a factor for TBgroup
+FTB <- factor(TBgroup,levels=c("CON","LTB","PTB"))
+X <- exprs(gse19439)
+# do a quick kruskal-wallis scan
+myKrusk <- function(i){
+        cat(i,"...",fill=F)
+        kruskal.test(x=X[i,], g=FTB)$p.value
+}
+
+```
+
+The p-values that were calculated from the Kruskal-Wallis test were recorded into `myPvals.RData`. The best 4 p-values (`myPvals`) were subsequently sorted in ascending order (the lowest value at the beginning of the vector). This order was assigned to groups in STA 525.
+
+```{r}
+load("myPvals.RData")
+GroupLabels <- c("Group I","Group II","Group III","Group IV")
+# pick the best 4 p-values and assign them to the students.
+best4 <- order(myPvals)[1:4]
+# print out list of best 4
+print(best4)
+
+for(i in 1:length(GroupLabels)){
+        cat("Group Label:", GroupLabels[i], "\t\t row assignment:", best4[i], fill=T)
+}
+myrow <- gse19439[10685,]
+dim(myrow)
+```
+
+Since we are group II, our row assignment was determined to be 10685 (as shown above). We were asked whether or not the assigned row corresponded to a specific gene and if so, what is known about the gene. Since each row does correspond to a gene, we subsetted `ExpressionSet` just to our assigned row and pulled out the `featureData`. 
+
+```{r}
+featureNames(myrow)
+gene.info <- pData(featureData(myrow))
+gene.info
+```
+
+
+# Problem 2
+## 2.1 Boxplot
+The data was log2 transformed for scability.
+```{r}
+sampleNames(myrow)
+boxplot(log2(X[10685,sampleNames(myrow)[FTB == 'CON']]),
+        log2(X[10685,sampleNames(myrow)[FTB == 'LTB']]),
+        log2(X[10685,sampleNames(myrow)[FTB == 'PTB']]),
+        main = "Boxplot of Row Data as Function of TB Phenotype",
+        names = c("CON", "LTB", "PTB"))
+#boxplots disguise multimodal data 
+```
+
+## 2.2 Violin Plot
+```{r, message=FALSE}
+require(vioplot)
+vioplot(log2(X[10685,sampleNames(myrow)[FTB == 'CON']]),
+        log2(X[10685,sampleNames(myrow)[FTB == 'LTB']]),
+        log2(X[10685,sampleNames(myrow)[FTB == 'PTB']]),
+        names = c("CON", "LTB", "PTB"))
+title("Violin Plot of Row Data as Function of TB Phenotype")
+```
+
+## 2.3 Bean Plot
+```{r, message=FALSE}
+require(beanplot)
+beanplot(log2(X[10685,sampleNames(myrow)[FTB == 'CON']]),
+        log2(X[10685,sampleNames(myrow)[FTB == 'LTB']]),
+        log2(X[10685,sampleNames(myrow)[FTB == 'PTB']]),
+        names = c("CON", "LTB", "PTB"))
+title("Bean Plot of Row Data as Function of TB Phenotype")
+```
+
+
+# Problem 3
+## 3.1 Heatmaps
+The best 20 student features were clustered and plotted in a heatmap using `heatmap.2`. The clustering method worked reasonably well in determined what group the samples belonged to (see column labels of heatmap). 
+```{r, message=FALSE}
+require(gplots)
+best20 <- order(myPvals)[1:20]
+x.best <- X[best20,]
+heatmap.2(X[best20,], main="20 student features", 
+          scale = "row", trace="none", labCol = FTB)
+```
+
+
+
+# Problem 4
+## 4.1 Pre-processing
+We removed NAs and zeroes.
+```{r}
+spikeDF <- read.table(file="AffyProbeSpikeValues.csv",sep="\t")
+levels(spikeDF[,2])
+summary(spikeDF[,2])
+
+#grab Spike fold changes for all entries as numeric ...
+#...so anything that was not a number is now an NA
+SpikeFC <- as.numeric(levels(spikeDF[,2])[spikeDF[,2]])
+
+#grab IDs
+names(SpikeFC) <- spikeDF$V1
+
+#remove NAs
+nonZeroDX <- which(!is.na(SpikeFC) & (SpikeFC != 0)) 
+spikeFC.clean <- SpikeFC[nonZeroDX]
+
+#check how many genes are left in dataset
+length(spikeFC.clean)
+```
+
+## 4.2 Normalization of 8 routes with expresso() and subset into ExpressionSet
+```{r, eval=FALSE}
+require(affy)
+bgcorrect.mtd <- c("rma", "mas", "rma", "mas",
+                   "rma", "none", "mas", "mas")
+normalized.mtd <- c("constant", "quantiles", "quantiles", "loess",
+                    "loess", "constant", "qspline", "qspline")
+pmcorrect.mtd <- c("pmonly", "pmonly", "subtractmm", "mas",
+                   "mas", "pmonly", "subtractmm", "mas")
+summary.mtd <- c("mas", "mas", "avgdiff", "medianpolish", 
+                 "medianpolish", "avgdiff", "mas", "mas")
+
+route.expsets <- list()
+for (i in 1:length(bgcorrect.mtd)){
+        routes <- expresso(affydata, 
+                           bgcorrect.method = bgcorrect.mtd[i], 
+                           normalize.method = normalized.mtd[i],
+                           pmcorrect.method = pmcorrect.mtd[i], 
+                           summary.method = summary.mtd[i])
+        route.expsets[[i]] <- exprs(routes)[nonZeroDX,]
+}
+```
+
+## 4.3 Multiple hypothesis testing
+```{r,eval=FALSE}
+#create labels for multitesting class labels -- 18 samples, 9 control, 9 experimental
+labels <- factor(c(rep(0, 9), rep(1, 9))) #0 is control, 1 is experimental
+
+#source("http://bioconductor.org/biocLite.R")
+#biocLite("multtest")				
+library(multtest)
+stats <- list()
+for (i in 1:length(route.expsets)){
+        #conduct multiple t test for 10000 permutations  
+        testing.routes <- mt.maxT(route.expsets[[i]],
+                                  classlabel = labels, B = 10000) 
+        stats[[i]] <- testing.routes$teststat[order(testing.routes$index)]
+}
+
+nrow <- nrow(route.expsets[[1]])
+myresponse <- rep(NA, nrow)
+#if the spike value is 1 ... assign as 0s in matrix ... 1s are the control
+myresponse[which(spikeFC.clean == 1)] = 1 
+#if spike value is not 1 ... assign as 1s in the matrix ... 0s are exp.
+myresponse[which(spikeFC.clean != 1)] = 0 
+```
+
+## 4.4 ROC Curves
+```{r, eval=FALSE}
+#apply roc function on input 
+roc.fnct <- function(x){roc(response = myresponse,
+                            predictor = abs(x), plot=TRUE, print.auc=TRUE)}
+#apply roc function on all the ordered test statistics in the list stats
+roc <- lapply(stats, roc.fnct) 
+```
+
+```{r, message=FALSE}
+load("question4.RData")
+rainbow <-  palette(rainbow(length(route.expsets)))
+plot(roc[[1]], main = "ROC curves for different normalization routes using expresso()", 
+     col=rainbow[1])
+legendText <- c()
+for(i in 1:length(route.expsets)){
+        plot(roc[[i]], add=TRUE, col=rainbow[i])
+        legendText[i] <- paste(bgcorrect.mtd[i],
+                               "/",normalized.mtd[i],"/", 
+                               pmcorrect.mtd[i],
+                               "/",summary.mtd[i],
+                               "   AUC: ",
+                               round(as.numeric(roc[[i]]$auc),3), sep="")
+}
+legend("bottomright",
+       legendText,
+       lty=c(rep(1,length(route.expsets))), 				
+       lwd=c(rep(3,length(route.expsets))),
+       col=rainbow)
+```
